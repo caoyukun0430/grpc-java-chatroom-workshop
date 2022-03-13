@@ -57,7 +57,8 @@ public class AuthServer {
     final Algorithm algorithm = Algorithm.HMAC256("secret");
     final AuthServiceImpl authService = new AuthServiceImpl(repository, "auth-issuer", algorithm);
 
-    final Server server = ServerBuilder.forPort(9091)
+//    final Server server = ServerBuilder.forPort(9091)
+    final Server server = ServerBuilder.forPort(EnvVars.AUTH_SERVICE_PORT)
             .addService(ServerInterceptors.intercept(authService, tracing.newServerInterceptor()))
             .build();
     // Add a shutdown hook to shutdown the server in case the process receives shutdown signal,

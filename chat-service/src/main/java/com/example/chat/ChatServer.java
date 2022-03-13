@@ -20,6 +20,7 @@ import brave.Tracing;
 import brave.grpc.GrpcTracing;
 import com.auth0.jwt.algorithms.Algorithm;
 import com.example.auth.AuthenticationServiceGrpc;
+import com.example.auth.EnvVars;
 import com.example.chat.grpc.ChatRoomServiceImpl;
 import com.example.chat.grpc.ChatStreamServiceImpl;
 import com.example.chat.grpc.JwtServerInterceptor;
@@ -50,7 +51,8 @@ public class ChatServer {
             .build());
 
     // TODO Add trace interceptor
-    final ManagedChannel authChannel = ManagedChannelBuilder.forTarget("localhost:9091")
+//    final ManagedChannel authChannel = ManagedChannelBuilder.forTarget("localhost:9091")
+    final ManagedChannel authChannel = ManagedChannelBuilder.forTarget(EnvVars.AUTH_SERVICE_URL)
             .intercept(tracing.newClientInterceptor())
         .usePlaintext(true)
         .build();
@@ -60,7 +62,8 @@ public class ChatServer {
     final ChatStreamServiceImpl chatStreamService = new ChatStreamServiceImpl(repository);
 
     // TODO Add JWT Server Interceptor, then later, trace interceptor
-    final Server server = ServerBuilder.forPort(9092)
+//    final Server server = ServerBuilder.forPort(9092)
+    final Server server = ServerBuilder.forPort(EnvVars.CHAT_SERVICE_PORT)
             .addService(ServerInterceptors.intercept(chatRoomService, jwtServerInterceptor, tracing.newServerInterceptor()))
             .addService(ServerInterceptors.intercept(chatStreamService, jwtServerInterceptor, tracing.newServerInterceptor()))
             .build();
