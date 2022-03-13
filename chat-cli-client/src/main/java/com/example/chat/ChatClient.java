@@ -16,14 +16,23 @@
 
 package com.example.chat;
 
-import com.example.auth.AuthenticationServiceGrpc;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
+import brave.Tracing;
+import brave.grpc.GrpcTracing;
+import com.example.auth.*;
+import com.example.chat.grpc.Constant;
+import com.example.chat.grpc.JwtCallCredential;
+import com.example.chat.grpc.JwtClientInterceptor;
+import io.grpc.*;
+import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
 import jline.console.ConsoleReader;
+import zipkin.Span;
+import zipkin.reporter.AsyncReporter;
+import zipkin.reporter.urlconnection.URLConnectionSender;
 
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static com.example.chat.ConsoleUtil.printLine;
@@ -39,6 +48,14 @@ public class ChatClient {
   private static Logger logger = Logger.getLogger(ChatClient.class.getName());
 
   private final ConsoleReader console = new ConsoleReader();
+
+  // Initialize Tracing contexts
+  private final AsyncReporter<Span> reporter = AsyncReporter.create(URLConnectionSender.create("http://localhost:9411/api/v1/spans"));
+  private final GrpcTracing tracing = GrpcTracing.create(Tracing.newBuilder()
+          .localServiceName("chat-client")
+          .reporter(reporter)
+          .build());
+
 
   // Channels
   private ManagedChannel authChannel;
@@ -72,8 +89,15 @@ public class ChatClient {
   public void initAuthService() {
     logger.info("initializing auth service");
     // TODO Build a new ManagedChannel
-
+    authChannel = ManagedChannelBuilder.forTarget("localhost:9091")
+            .intercept(new JwtClientInterceptor())
+            .intercept(tracing.newClientInterceptor())
+            .usePlaintext(true)
+            .build();
     // TODO Get a new Blocking Stub
+    authService = AuthenticationServiceGrpc.newBlockingStub(authChannel);
+
+
   }
 
   /**
@@ -85,16 +109,48 @@ public class ChatClient {
     logger.info("initializing chat services with token: " + token);
 
     // TODO Add JWT Token via a Call Credential
+    Metadata metadata = new Metadata();
+    metadata.put(Constant.JWT_METADATA_KEY, token);
     chatChannel = ManagedChannelBuilder.forTarget("localhost:9092")
+            .intercept(new JwtClientInterceptor())
+            .intercept(tracing.newClientInterceptor())
         .usePlaintext(true)
         .build();
 
-    chatRoomService = ChatRoomServiceGrpc.newBlockingStub(chatChannel);
-    chatStreamService = ChatStreamServiceGrpc.newStub(chatChannel);
+      JwtCallCredential callCredential = new JwtCallCredential(token);
+    chatRoomService = ChatRoomServiceGrpc.newBlockingStub(chatChannel).withCallCredentials(callCredential);
+    // We can decorate the stub using MetadataUtils to attach additional headers
+    chatRoomService = MetadataUtils.attachHeaders(chatRoomService, metadata);
+    chatStreamService = ChatStreamServiceGrpc.newStub(chatChannel).withCallCredentials(callCredential);
   }
 
   public void initChatStream() {
     // TODO Call chatStreamService.chat(...)
+    this.toServer = chatStreamService.chat(new StreamObserver<ChatMessageFromServer>() {
+       @Override
+       public void onNext(ChatMessageFromServer chatMessageFromServer) {
+           try {
+               printLine(console, String.format("%tr %s> %s", chatMessageFromServer
+                       .getTimestamp().getSeconds(),
+                       chatMessageFromServer.getFrom(),
+                       chatMessageFromServer.getMessage()));
+           } catch (IOException e) {
+               logger.log(Level.SEVERE, "error printing to console", e);
+           }
+       }
+
+       @Override
+       public void onError(Throwable throwable) {
+           logger.log(Level.SEVERE, "gRPC error", throwable);
+           shutdown();
+       }
+
+       @Override
+       public void onCompleted() {
+           logger.severe("server closed connection, shutting down...");
+           shutdown();
+       }
+   });
     // TODO and assign the server responseObserver to toServer variable
   }
 
@@ -222,11 +278,31 @@ public class ChatClient {
     logger.info("authenticating user: " + username);
 
     // TODO Call authService.authenticate(...) and retreive the token
-    // TODO Retrieve all the roles with authService.authorization(...) and print out all the roles
-    // TODO Return the token
-    // TODO Catch StatusRuntimeException, because there could be Unauthenticated errors.
-    // TODO If there are errors, return null
-    return null;
+    //  This method will be called when you start the client and initiate the login process:
+    try {
+      AuthenticationResponse authenticationReponse = authService.authenticate(AuthenticationRequest.newBuilder()
+              .setUsername(username)
+              .setPassword(password)
+              .build());
+      String token = authenticationReponse.getToken();
+      // TODO Retrieve all the roles with authService.authorization(...) and print out all the roles
+      // authorization need the token to verify token, Catch JWTVerificationException.
+      AuthorizationResponse authorizationResponse = authService.authorization(AuthorizationRequest.newBuilder()
+              .setToken(token)
+              .build());
+      logger.info("user has these roles: " + authorizationResponse.getRolesList());
+      // TODO Return the token
+      return token;
+    } catch (StatusRuntimeException e) {
+      // TODO Catch StatusRuntimeException, because there could be Unauthenticated errors.
+      if (e.getStatus().getCode() == Status.Code.UNAUTHENTICATED) {
+        logger.log(Level.SEVERE, "user not authenticated: " + username, e);
+      } else {
+        logger.log(Level.SEVERE, "caught a gRPC exception", e);
+      }
+      // TODO If there are errors, return null
+      return null;
+    }
   }
 
   /**
@@ -291,8 +367,15 @@ public class ChatClient {
    */
   private void sendMessage(String room, String message) {
     logger.info("sending chat message");
-    // TODO call toServer.onNext(...)
-    logger.severe("not implemented!");
+    // TODO call toServer.onNext(...) Every time a user presses enter, it'll call this method to send the message out to the server:
+      if (toServer == null) {
+          logger.severe("Not connected");
+      }
+      toServer.onNext(ChatMessage.newBuilder()
+              .setType(MessageType.TEXT)
+              .setRoomName(room)
+              .setMessage(message)
+            .build());
   }
 
   class CurrentState {

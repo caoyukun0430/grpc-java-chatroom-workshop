@@ -25,9 +25,16 @@ import static io.grpc.Metadata.ASCII_STRING_MARSHALLER;
 /**
  * Created by rayt on 10/6/16.
  */
+/**
+ * Effectively, all metadata key/value pairs are transmitted via HTTP/2 headers.
+ * All Metadata are strongly typed and keyed. That means, rather than using a string as a key you pass into a Map, you have to create a Metadata Key.
+ * However it is limited because it only text or something that be serialized into text.  As well it is not directly accessible from server stubs.  This is a problem for example if the server stub needs to get the JWT token for validation.
+* */
 public class Constant {
   // TODO Add a JWT_METADATA_KEY
+  public static final Metadata.Key<String> JWT_METADATA_KEY =
+          Metadata.Key.of("jwt", ASCII_STRING_MARSHALLER);
   // TODO Add a JWT Context Key
-
+  public static final Context.Key<DecodedJWT> JWT_CTX_KEY = Context.key("jwt");
   public static final Context.Key<String> USER_ID_CTX_KEY = Context.key("userId");
 }

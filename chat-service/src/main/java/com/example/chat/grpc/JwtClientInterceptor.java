@@ -23,13 +23,17 @@ import io.grpc.*;
  * Created by rayt on 10/6/16.
  */
 public class JwtClientInterceptor implements ClientInterceptor {
+  // Similarly, you can propagate context value to another service over network boundary by converting the context value into a Metadata.
   @Override
   public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(MethodDescriptor<ReqT, RespT> methodDescriptor, CallOptions callOptions, Channel channel) {
     return new ForwardingClientCall.SimpleForwardingClientCall<ReqT, RespT>(channel.newCall(methodDescriptor, callOptions)) {
       @Override
       public void start(Listener<RespT> responseListener, Metadata headers) {
         // TODO Convert JWT Context to Metadata header
-
+        DecodedJWT jwt = Constant.JWT_CTX_KEY.get();
+        if (jwt != null) {
+          headers.put(Constant.JWT_METADATA_KEY, jwt.getToken());
+        }
         super.start(responseListener, headers);
       }
     };
